@@ -57,7 +57,7 @@ enum {
 };
 
 static struct hids_report input = {
-	.id = 0x01,
+	.id = 0x02,
 	.type = HIDS_INPUT,
 };
 
@@ -66,7 +66,7 @@ static uint8_t mouse_report_map[] = {
 	0x05, 0x01,        // Usage Page (Generic Desktop Ctrls)
 	0x09, 0x02,        // Usage (Mouse)
 	0xA1, 0x01,        // Collection (Application)
-	// 0x85, 0x01,        //   Report ID (1)
+	0x85, 0x02,        //   Report ID (2)
 	0x09, 0x01,        //   Usage (Pointer)
 	0xA1, 0x00,        //   Collection (Physical)
 	0x05, 0x09,        //     Usage Page (Button)
@@ -102,6 +102,7 @@ static uint8_t mouse_report_map[] = {
 };
 
 static uint8_t mouse_input_report[] = {
+	2,
 	0, // no buttons
 	10, 0, // x, y
 	0,
@@ -140,8 +141,6 @@ static ssize_t read_input_report(struct bt_conn *conn,
 				 const struct bt_gatt_attr *attr, void *buf,
 				 uint16_t len, uint16_t offset)
 {
-	mouse_input_report[1] *= -1;
-	// return bt_gatt_attr_read(conn, attr, buf, len, offset, NULL, 0);
 	return bt_gatt_attr_read(conn, attr, buf, len, offset, mouse_input_report,
 				sizeof(mouse_input_report));
 }
@@ -207,7 +206,7 @@ void my_expiry_function(struct k_timer *timer_id)
 	gpio_pin_set(led, PIN, (int)led_is_on);
 	led_is_on = !led_is_on;
 
-	mouse_input_report[1] *= -1;
+	mouse_input_report[2] *= -1;
 	bt_gatt_notify(NULL, hog_svc.attrs + 5, mouse_input_report,
 		sizeof(mouse_input_report));
 }
