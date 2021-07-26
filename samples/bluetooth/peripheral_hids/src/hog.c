@@ -22,6 +22,12 @@
 #include <bluetooth/uuid.h>
 #include <bluetooth/gatt.h>
 
+
+#include <device.h>
+#include <devicetree.h>
+#include <drivers/gpio.h>
+
+
 enum {
 	HIDS_REMOTE_WAKE = BIT(0),
 	HIDS_NORMALLY_CONNECTABLE = BIT(1),
@@ -55,37 +61,52 @@ static struct hids_report input = {
 	.type = HIDS_INPUT,
 };
 
-static uint8_t simulate_input;
 static uint8_t ctrl_point;
-static uint8_t report_map[] = {
-	0x05, 0x01, /* Usage Page (Generic Desktop Ctrls) */
-	0x09, 0x02, /* Usage (Mouse) */
-	0xA1, 0x01, /* Collection (Application) */
-	0x09, 0x01, /*   Usage (Pointer) */
-	0xA1, 0x00, /*   Collection (Physical) */
-	0x05, 0x09, /*     Usage Page (Button) */
-	0x19, 0x01, /*     Usage Minimum (0x01) */
-	0x29, 0x03, /*     Usage Maximum (0x03) */
-	0x15, 0x00, /*     Logical Minimum (0) */
-	0x25, 0x01, /*     Logical Maximum (1) */
-	0x95, 0x03, /*     Report Count (3) */
-	0x75, 0x01, /*     Report Size (1) */
-	0x81, 0x02, /*     Input (Data,Var,Abs,No Wrap,Linear,...) */
-	0x95, 0x01, /*     Report Count (1) */
-	0x75, 0x05, /*     Report Size (5) */
-	0x81, 0x03, /*     Input (Const,Var,Abs,No Wrap,Linear,...) */
-	0x05, 0x01, /*     Usage Page (Generic Desktop Ctrls) */
-	0x09, 0x30, /*     Usage (X) */
-	0x09, 0x31, /*     Usage (Y) */
-	0x15, 0x81, /*     Logical Minimum (129) */
-	0x25, 0x7F, /*     Logical Maximum (127) */
-	0x75, 0x08, /*     Report Size (8) */
-	0x95, 0x02, /*     Report Count (2) */
-	0x81, 0x06, /*     Input (Data,Var,Rel,No Wrap,Linear,...) */
-	0xC0,       /*   End Collection */
-	0xC0,       /* End Collection */
+static uint8_t mouse_report_map[] = {
+	0x05, 0x01,        // Usage Page (Generic Desktop Ctrls)
+	0x09, 0x02,        // Usage (Mouse)
+	0xA1, 0x01,        // Collection (Application)
+	// 0x85, 0x01,        //   Report ID (1)
+	0x09, 0x01,        //   Usage (Pointer)
+	0xA1, 0x00,        //   Collection (Physical)
+	0x05, 0x09,        //     Usage Page (Button)
+	0x19, 0x01,        //     Usage Minimum (0x01)
+	0x29, 0x05,        //     Usage Maximum (0x05)
+	0x15, 0x00,        //     Logical Minimum (0)
+	0x25, 0x01,        //     Logical Maximum (1)
+	0x75, 0x01,        //     Report Size (1)
+	0x95, 0x05,        //     Report Count (5)
+	0x81, 0x02,        //     Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
+	0x95, 0x01,        //     Report Count (1)
+	0x75, 0x03,        //     Report Size (3)
+	0x81, 0x01,        //     Input (Const,Array,Abs,No Wrap,Linear,Preferred State,No Null Position)
+	0x05, 0x01,        //     Usage Page (Generic Desktop Ctrls)
+	0x09, 0x30,        //     Usage (X)
+	0x09, 0x31,        //     Usage (Y)
+	0x09, 0x38,        //     Usage (Wheel)
+	0x15, 0x81,        //     Logical Minimum (-127)
+	0x25, 0x7F,        //     Logical Maximum (127)
+	0x75, 0x08,        //     Report Size (8)
+	0x95, 0x03,        //     Report Count (3)
+	0x81, 0x06,        //     Input (Data,Var,Rel,No Wrap,Linear,Preferred State,No Null Position)
+	0x05, 0x0C,        //     Usage Page (Consumer)
+	0x0A, 0x38, 0x02,  //     Usage (AC Pan)
+	0x15, 0x81,        //     Logical Minimum (-127)
+	0x25, 0x7F,        //     Logical Maximum (127)
+	0x75, 0x08,        //     Report Size (8)
+	0x95, 0x01,        //     Report Count (1)
+	0x81, 0x06,        //     Input (Data,Var,Rel,No Wrap,Linear,Preferred State,No Null Position)
+	0xC0,              //   End Collection
+	0xC0,              // End Collection
+
 };
 
+static uint8_t mouse_input_report[] = {
+	0, // no buttons
+	10, 0, // x, y
+	0,
+	0,
+};
 
 static ssize_t read_info(struct bt_conn *conn,
 			  const struct bt_gatt_attr *attr, void *buf,
@@ -99,8 +120,8 @@ static ssize_t read_report_map(struct bt_conn *conn,
 			       const struct bt_gatt_attr *attr, void *buf,
 			       uint16_t len, uint16_t offset)
 {
-	return bt_gatt_attr_read(conn, attr, buf, len, offset, report_map,
-				 sizeof(report_map));
+	return bt_gatt_attr_read(conn, attr, buf, len, offset, mouse_report_map,
+				 sizeof(mouse_report_map));
 }
 
 static ssize_t read_report(struct bt_conn *conn,
@@ -113,14 +134,16 @@ static ssize_t read_report(struct bt_conn *conn,
 
 static void input_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
 {
-	simulate_input = (value == BT_GATT_CCC_NOTIFY) ? 1 : 0;
 }
 
 static ssize_t read_input_report(struct bt_conn *conn,
 				 const struct bt_gatt_attr *attr, void *buf,
 				 uint16_t len, uint16_t offset)
 {
-	return bt_gatt_attr_read(conn, attr, buf, len, offset, NULL, 0);
+	mouse_input_report[1] *= -1;
+	// return bt_gatt_attr_read(conn, attr, buf, len, offset, NULL, 0);
+	return bt_gatt_attr_read(conn, attr, buf, len, offset, mouse_input_report,
+				sizeof(mouse_input_report));
 }
 
 static ssize_t write_ctrl_point(struct bt_conn *conn,
@@ -160,6 +183,44 @@ BT_GATT_SERVICE_DEFINE(hog_svc,
 			       NULL, write_ctrl_point, &ctrl_point),
 );
 
+/* The devicetree node identifier for the "led0" alias. */
+#define LED0_NODE DT_ALIAS(led0)
+
+#if DT_NODE_HAS_STATUS(LED0_NODE, okay)
+#define LED0	DT_GPIO_LABEL(LED0_NODE, gpios)
+#define PIN	DT_GPIO_PIN(LED0_NODE, gpios)
+#define FLAGS	DT_GPIO_FLAGS(LED0_NODE, gpios)
+#else
+/* A build error here means your board isn't set up to blink an LED. */
+#error "Unsupported board: led0 devicetree alias is not defined"
+#define LED0	""
+#define PIN	0
+#define FLAGS	0
+#endif
+
+
+const struct device *led;
+bool led_is_on = true;
+
+void my_expiry_function(struct k_timer *timer_id)
+{
+	gpio_pin_set(led, PIN, (int)led_is_on);
+	led_is_on = !led_is_on;
+
+	mouse_input_report[1] *= -1;
+	bt_gatt_notify(NULL, hog_svc.attrs + 5, mouse_input_report,
+		sizeof(mouse_input_report));
+}
+
+struct k_timer my_timer;
+K_TIMER_DEFINE(my_timer, my_expiry_function, NULL);
+
 void hog_init(void)
 {
+	led = device_get_binding(LED0);
+	gpio_pin_configure(led, PIN, GPIO_OUTPUT_ACTIVE | FLAGS);
+
+
+	/* start periodic timer that expires once every second */
+	k_timer_start(&my_timer, K_SECONDS(1), K_SECONDS(1));
 }
