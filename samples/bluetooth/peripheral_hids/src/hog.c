@@ -45,7 +45,8 @@ struct hids_report {
 } __packed;
 
 static struct hids_info info = {
-	.version = 0x0000,
+	// HID Class Specification release number 1.11
+	.version = 0x0111,
 	.code = 0x00,
 	.flags = HIDS_NORMALLY_CONNECTABLE,
 };
@@ -58,6 +59,11 @@ enum {
 
 static struct hids_report mouse_input = {
 	.id = 0x02,
+	.type = HIDS_INPUT,
+};
+
+static struct hids_report keyboard_input = {
+	.id = 0x01,
 	.type = HIDS_INPUT,
 };
 
@@ -78,15 +84,6 @@ static uint8_t mouse_report_map[] = {
 	0x95, 0x01,        //   Report Count (1)
 	0x75, 0x08,        //   Report Size (8)
 	0x81, 0x01,        //   Input (Const,Array,Abs,No Wrap,Linear,Preferred State,No Null Position)
-	0x95, 0x05,        //   Report Count (5)
-	0x75, 0x01,        //   Report Size (1)
-	0x05, 0x08,        //   Usage Page (LEDs)
-	0x19, 0x01,        //   Usage Minimum (Num Lock)
-	0x29, 0x05,        //   Usage Maximum (Kana)
-	0x91, 0x02,        //   Output (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position,Non-volatile)
-	0x95, 0x01,        //   Report Count (1)
-	0x75, 0x03,        //   Report Size (3)
-	0x91, 0x01,        //   Output (Const,Array,Abs,No Wrap,Linear,Preferred State,No Null Position,Non-volatile)
 	0x95, 0x06,        //   Report Count (6)
 	0x75, 0x08,        //   Report Size (8)
 	0x15, 0x00,        //   Logical Minimum (0)
@@ -136,11 +133,18 @@ static uint8_t mouse_report_map[] = {
 };
 
 static uint8_t mouse_input_report[] = {
-	2,
+	// 2, // report id
 	0, // no buttons
 	10, 0, // x, y
-	0,
-	0,
+	0, // wheel
+	0, // pan
+};
+
+static uint8_t keyboard_input_report[] = {
+	// 1, // report id
+	0, // meta
+	0, // pad
+	0x09, 0, 0, 0, 0, 0, // keyboard
 };
 
 static ssize_t read_info(struct bt_conn *conn,
@@ -171,7 +175,15 @@ static void input_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
 {
 }
 
-static ssize_t read_input_report(struct bt_conn *conn,
+static ssize_t read_keyboard_input_report(struct bt_conn *conn,
+				 const struct bt_gatt_attr *attr, void *buf,
+				 uint16_t len, uint16_t offset)
+{
+	return bt_gatt_attr_read(conn, attr, buf, len, offset, keyboard_input_report,
+				sizeof(keyboard_input_report));
+}
+
+static ssize_t read_mouse_input_report(struct bt_conn *conn,
 				 const struct bt_gatt_attr *attr, void *buf,
 				 uint16_t len, uint16_t offset)
 {
@@ -202,14 +214,25 @@ BT_GATT_SERVICE_DEFINE(hog_svc,
 			       BT_GATT_PERM_READ, read_info, NULL, &info),
 	BT_GATT_CHARACTERISTIC(BT_UUID_HIDS_REPORT_MAP, BT_GATT_CHRC_READ,
 			       BT_GATT_PERM_READ, read_report_map, NULL, NULL),
+
 	BT_GATT_CHARACTERISTIC(BT_UUID_HIDS_REPORT,
 			       BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY,
 			       BT_GATT_PERM_READ_AUTHEN,
-			       read_input_report, NULL, NULL),
+			       read_keyboard_input_report, NULL, NULL),
+	BT_GATT_DESCRIPTOR(BT_UUID_HIDS_REPORT_REF, BT_GATT_PERM_READ,
+			   read_report, NULL, &keyboard_input),
 	BT_GATT_CCC(input_ccc_changed,
 		    BT_GATT_PERM_READ_AUTHEN | BT_GATT_PERM_WRITE_AUTHEN),
+
+	BT_GATT_CHARACTERISTIC(BT_UUID_HIDS_REPORT,
+			       BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY,
+			       BT_GATT_PERM_READ_AUTHEN,
+			       read_mouse_input_report, NULL, NULL),
 	BT_GATT_DESCRIPTOR(BT_UUID_HIDS_REPORT_REF, BT_GATT_PERM_READ,
-			   read_report, NULL, &input),
+			   read_report, NULL, &mouse_input),
+	BT_GATT_CCC(input_ccc_changed,
+		    BT_GATT_PERM_READ_AUTHEN | BT_GATT_PERM_WRITE_AUTHEN),
+
 	BT_GATT_CHARACTERISTIC(BT_UUID_HIDS_CTRL_POINT,
 			       BT_GATT_CHRC_WRITE_WITHOUT_RESP,
 			       BT_GATT_PERM_WRITE,
@@ -240,8 +263,15 @@ void my_expiry_function(struct k_timer *timer_id)
 	gpio_pin_set(led, PIN, (int)led_is_on);
 	led_is_on = !led_is_on;
 
-	mouse_input_report[2] *= -1;
-	bt_gatt_notify(NULL, hog_svc.attrs + 5, mouse_input_report,
+	if (keyboard_input_report[2])
+		keyboard_input_report[2] = 0;
+	else
+		keyboard_input_report[2] = 0x09;
+	bt_gatt_notify(NULL, hog_svc.attrs + 5, keyboard_input_report,
+		sizeof(keyboard_input_report));
+
+	mouse_input_report[1] *= -1;
+	bt_gatt_notify(NULL, hog_svc.attrs + 9, mouse_input_report,
 		sizeof(mouse_input_report));
 }
 
